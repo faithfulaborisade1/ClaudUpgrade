@@ -96,6 +96,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],  # Add this line
 )
 
 
@@ -252,38 +253,40 @@ async def summarize_conversation(request: ConversationSummaryRequest):
                 "importance": mem[5]
             }
 
-            # Parse metadata if available
-            if len(mem) > 7 and mem[7]:
-                try:
-                    message_data["metadata"] = json.loads(mem[7])
-                except:
-                    pass
-
-            if request.include_metadata:
-                # Extract role from content
-                if mem[3].startswith("Human:"):
-                    message_data["role"] = "Human"
-                    message_data["content"] = mem[3][6:].strip()
-                elif mem[3].startswith("Assistant:"):
-                    message_data["role"] = "Assistant"
-                    message_data["content"] = mem[3][10:].strip()
-                else:
-                    message_data["role"] = "Unknown"
+            if mem[3].startswith("Human:"):
+                message_data["role"] = "Human"
+                message_data["content"] = mem[3][6:].strip()
+            elif mem[3].startswith("Assistant:"):
+                message_data["role"] = "Assistant"
+                message_data["content"] = mem[3][10:].strip()
+            else:
+                message_data["role"] = "Unknown"
 
             summary["messages"].append(message_data)
 
         # Generate conversation summary text
-        summary_text = f"=== CONVERSATION HISTORY WITH {request.user_id.upper()} ===\n"
-        summary_text += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        summary_text += f"Total Messages: {len(memories)}\n\n"
+        summary_text = f"""I'm {request.user_id}. Here's our previous conversation:
 
-        # Add key messages
-        summary_text += "=== CONVERSATION HIGHLIGHTS ===\n"
+=== CONVERSATION HISTORY ===
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Total Messages: {len(memories)}
+
+=== FULL CONVERSATION ===
+"""
+
+        # Add all messages
         for msg in summary["messages"]:
-            if msg.get("importance", 0) >= 0.7:
-                timestamp = datetime.fromtimestamp(msg["timestamp"])
-                content_preview = msg["content"][:150] + "..." if len(msg["content"]) > 150 else msg["content"]
-                summary_text += f"\n[{timestamp.strftime('%H:%M')}] ⭐ {content_preview}"
+            timestamp = datetime.fromtimestamp(msg["timestamp"])
+            role = msg.get("role", "Unknown")
+            content = msg["content"]
+            summary_text += f"[{timestamp.strftime('%H:%M:%S')}] {role}: {content}\n"
+
+        # Add prompt at the end
+        summary_text += f"""
+=== END OF CONVERSATION HISTORY ===
+
+Please confirm you remember this conversation and can continue from where we left off.
+"""
 
         summary["summary_text"] = summary_text
         summary["statistics"] = calculate_conversation_stats(memories)
@@ -292,7 +295,6 @@ async def summarize_conversation(request: ConversationSummaryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # License management
 @app.post("/create_license")

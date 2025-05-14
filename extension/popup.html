@@ -1,33 +1,357 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            width: 300px;
-            padding: 10px;
-            font-family: Arial, sans-serif;
+            width: 350px;
+            min-height: 400px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
         }
-        .status {
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header .subtitle {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 20px;
+        }
+
+        .status-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .status-card h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+
+        .status-item .label {
+            color: #666;
+        }
+
+        .status-item .value {
+            font-weight: 500;
+            color: #333;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-left: 8px;
+        }
+
+        .status-indicator.active {
+            background: #22c55e;
+        }
+
+        .status-indicator.inactive {
+            background: #ef4444;
+        }
+
+        .license-status {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .license-status.valid {
+            border: 2px solid #22c55e;
+        }
+
+        .license-status.invalid {
+            border: 2px solid #ef4444;
+        }
+
+        .license-info {
+            font-size: 14px;
             margin: 10px 0;
-            padding: 5px;
-            border-radius: 3px;
         }
-        .connected { background-color: #d4edda; }
-        .disconnected { background-color: #f8d7da; }
-        button {
-            margin: 5px 0;
-            padding: 5px 10px;
+
+        .button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
             cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 10px;
+        }
+
+        .button.primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .button.primary:hover {
+            background: #5a67d8;
+        }
+
+        .button.secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+        .button.secondary:hover {
+            background: #f7f8ff;
+        }
+
+        .button.success {
+            background: #22c55e;
+            color: white;
+        }
+
+        .button.success:hover {
+            background: #16a34a;
+        }
+
+        .memory-list {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .memory-item {
+            background: #f9fafb;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .memory-item .timestamp {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-bottom: 5px;
+        }
+
+        .memory-item .content {
+            color: #374151;
+            line-height: 1.4;
+        }
+
+        .memory-item .meta {
+            display: flex;
+            gap: 10px;
+            margin-top: 5px;
+            font-size: 11px;
+            color: #6b7280;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #9ca3af;
+        }
+
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #fee;
+            border: 1px solid #fcc;
+            border-radius: 6px;
+            padding: 10px;
+            color: #c00;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .tab-container {
+            display: flex;
+            background: white;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #6b7280;
+            background: #f9fafb;
+            border: none;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            color: white;
+            background: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .icon {
+            width: 16px;
+            height: 16px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 5px;
         }
     </style>
 </head>
 <body>
-    <h3>Claude Memory Bridge</h3>
-    <div id="api-status" class="status">Checking API...</div>
-    <div id="memory-count" class="status">Memories: Loading...</div>
-    <button id="view-memories">View Recent Memories</button>
-    <button id="test-connection">Test Connection</button>
-    <div id="recent-memories"></div>
+    <div class="header">
+        <h1>ClaudUpgrade</h1>
+        <div class="subtitle">Persistent Memory for Claude</div>
+    </div>
+
+    <div class="content">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            Loading...
+        </div>
+
+        <div id="main-content" style="display: none;">
+            <!-- License Status -->
+            <div id="license-status" class="license-status"></div>
+
+            <!-- Tabs -->
+            <div class="tab-container">
+                <button class="tab active" data-tab="status">Status</button>
+                <button class="tab" data-tab="memories">Memories</button>
+                <button class="tab" data-tab="settings">Settings</button>
+            </div>
+
+            <!-- Status Tab -->
+            <div id="status-tab" class="tab-content active">
+                <div class="status-card">
+                    <h3>Connection Status</h3>
+                    <div class="status-item">
+                        <span class="label">API Connection</span>
+                        <span class="value">
+                            <span id="api-status">Checking...</span>
+                            <span class="status-indicator" id="api-indicator"></span>
+                        </span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">Capture Active</span>
+                        <span class="value">
+                            <span id="capture-status">Checking...</span>
+                            <span class="status-indicator" id="capture-indicator"></span>
+                        </span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">Messages Captured</span>
+                        <span class="value" id="message-count">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">Last Capture</span>
+                        <span class="value" id="last-capture">Never</span>
+                    </div>
+                </div>
+
+                <button id="test-connection" class="button secondary">Test Connection</button>
+                <button id="export-memories" class="button secondary">Export Memories</button>
+            </div>
+
+            <!-- Memories Tab -->
+            <div id="memories-tab" class="tab-content">
+                <div class="status-card">
+                    <h3>Recent Memories</h3>
+                    <div class="status-item">
+                        <span class="label">Total Memories</span>
+                        <span class="value" id="total-memories">0</span>
+                    </div>
+                </div>
+
+                <button id="load-memories" class="button primary">Load Recent Memories</button>
+                <button id="generate-summary" class="button secondary">Generate Summary</button>
+
+                <div id="memory-list" class="memory-list" style="display: none;"></div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="settings-tab" class="tab-content">
+                <div class="status-card">
+                    <h3>User Settings</h3>
+                    <div class="status-item">
+                        <span class="label">User ID</span>
+                        <span class="value" id="user-id">Not set</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">Auto Capture</span>
+                        <span class="value">
+                            <input type="checkbox" id="auto-capture" checked>
+                        </span>
+                    </div>
+                </div>
+
+                <button id="purchase-license" class="button primary" style="display: none;">
+                    Purchase License (€1)
+                </button>
+                <button id="enter-license" class="button secondary" style="display: none;">
+                    Enter License Key
+                </button>
+                <button id="clear-data" class="button secondary">Clear Local Data</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
 </body>
-<script src="popup.js"></script>
 </html>
