@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            width: 300px;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .connected { background-color: #d4edda; }
+        .disconnected { background-color: #f8d7da; }
+        button {
+            margin: 5px 0;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h3>Claude Memory Bridge</h3>
+    <div id="api-status" class="status">Checking API...</div>
+    <div id="memory-count" class="status">Memories: Loading...</div>
+    <button id="view-memories">View Recent Memories</button>
+    <button id="test-connection">Test Connection</button>
+    <div id="recent-memories"></div>
+</body>
+<script src="popup.js"></script>
+</html>
