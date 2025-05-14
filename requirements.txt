@@ -1,8 +1,8 @@
 # Core dependencies
-fastapi==0.104.1
+fastapi==0.109.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
-python-multipart==0.0.6
+python-multipart==0.0.19
 aiofiles==23.2.1
 
 # Database
@@ -10,9 +10,9 @@ sqlalchemy==2.0.23
 redis==5.0.1
 
 # Authentication & Security
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.4.0
 passlib[bcrypt]==1.7.4
-cryptography==41.0.7
+cryptography==44.0.1
 
 # Stripe for payments
 stripe==7.8.0
@@ -23,4 +23,4 @@ httpx==0.25.2
 
 # Optional monitoring
 prometheus-client==0.19.0
-sentry-sdk==1.39.1
+sentry-sdk==2.8.0

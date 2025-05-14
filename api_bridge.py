@@ -1,78 +1,194 @@
-# api_bridge.py
-from fastapi import FastAPI, HTTPException
+# api_bridge.py - Enhanced with monetization and better tracking
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from core.memory import MemorySystem
 import uvicorn
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
+import hmac
+import hashlib
+import secrets
+import json
+import redis
+from sqlalchemy import create_engine, Column, String, DateTime, Boolean, Float
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+import stripe
 
-app = FastAPI(title="Claude Memory Bridge API")
+# Configuration
+REDIS_URL = "redis://localhost:6379"
+DATABASE_URL = "sqlite:///./claudupgrade.db"
+STRIPE_SECRET_KEY = "your_stripe_secret_key"
+LICENSE_PRICE_EUR = 100  # €1.00 in cents
+HMAC_SECRET = secrets.token_hex(32)
 
-# Enable CORS for browser extension
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Initialize
+app = FastAPI(title="ClaudUpgrade API", version="2.0")
+security = HTTPBearer()
+stripe.api_key = STRIPE_SECRET_KEY
 
-# Initialize memory system
+# Initialize Redis with fallback
+try:
+    redis_client = redis.from_url(REDIS_URL)
+    redis_client.ping()
+    redis_enabled = True
+except:
+    redis_client = None
+    redis_enabled = False
+    print("Redis not available, using database only")
+
 memory_system = MemorySystem()
 
+# Database setup
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-# Data models
+
+# Models
+class License(Base):
+    __tablename__ = "licenses"
+
+    key = Column(String, primary_key=True)
+    email = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime)
+    is_active = Column(Boolean, default=True)
+    stripe_session_id = Column(String)
+
+
+Base.metadata.create_all(bind=engine)
+
+
+# Pydantic models
 class MemoryRequest(BaseModel):
     content: str
     user_id: str
     importance: float = 0.5
     emotional_context: Optional[str] = None
+    timestamp: Optional[float] = None
+    metadata: Optional[dict] = None
 
 
-class MemoryResponse(BaseModel):
-    status: str
-    timestamp: float
-    message: str
+class LicenseRequest(BaseModel):
+    email: str
+    success_url: str
+    cancel_url: str
 
 
-# API Endpoints
+class LicenseValidation(BaseModel):
+    key: str
+
+
+class ConversationSummaryRequest(BaseModel):
+    user_id: str
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    include_metadata: bool = True
+
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://claude.ai", "chrome-extension://*", "http://localhost:*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Dependencies
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# API Routes
 @app.get("/")
 async def root():
-    return {"message": "Claude Memory Bridge API is running"}
+    return {
+        "message": "ClaudUpgrade API v2.0",
+        "features": ["Persistent Memory", "License Management", "Conversation Tracking"],
+        "redis_enabled": redis_enabled
+    }
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "database": "connected",
+        "redis": "connected" if redis_enabled else "disabled"
+    }
 
 
-@app.post("/remember", response_model=MemoryResponse)
+# Memory endpoints
+@app.post("/remember")
 async def create_memory(memory: MemoryRequest):
-    """Store a new memory"""
+    """Store a new memory with enhanced metadata"""
     try:
-        timestamp = memory_system.remember(
+        # Use provided timestamp or generate new one
+        timestamp = memory.timestamp or datetime.now().timestamp()
+
+        # Store in database
+        stored_timestamp = memory_system.remember(
             content=memory.content,
             user_id=memory.user_id,
             importance=memory.importance,
-            emotional_context=memory.emotional_context
+            emotional_context=memory.emotional_context,
+            metadata=memory.metadata,
+            timestamp=timestamp
         )
-        return MemoryResponse(
-            status="success",
-            timestamp=timestamp,
-            message="Memory stored successfully"
-        )
+
+        # Also store in Redis for fast retrieval (if available)
+        if redis_enabled:
+            try:
+                redis_key = f"conversation:{memory.user_id}:{datetime.now().strftime('%Y%m%d')}"
+                redis_client.rpush(redis_key, json.dumps({
+                    "content": memory.content,
+                    "timestamp": stored_timestamp,
+                    "importance": memory.importance,
+                    "emotional_context": memory.emotional_context
+                }))
+                redis_client.expire(redis_key, 86400 * 30)  # 30 days
+            except Exception as e:
+                print(f"Redis error (non-critical): {e}")
+
+        return {
+            "status": "success",
+            "timestamp": stored_timestamp,
+            "message": "Memory stored successfully"
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/recall/{user_id}")
-async def get_memories(user_id: str, limit: int = 10):
-    """Retrieve memories for a user"""
+async def get_memories(
+        user_id: str,
+        limit: int = 10,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+):
+    """Retrieve memories with date filtering"""
     try:
-        memories = memory_system.recall(user_id=user_id, limit=limit)
+        # Parse dates if provided
+        start = datetime.fromisoformat(start_date) if start_date else None
+        end = datetime.fromisoformat(end_date) if end_date else None
 
-        # Format memories for JSON response
+        memories = memory_system.recall(
+            user_id=user_id,
+            limit=limit,
+            start_date=start,
+            end_date=end
+        )
+
         formatted_memories = []
         for mem in memories:
             formatted_memories.append({
@@ -82,41 +198,227 @@ async def get_memories(user_id: str, limit: int = 10):
                 "content": mem[3],
                 "emotional_context": mem[4],
                 "importance": mem[5],
-                "category": mem[6] if len(mem) > 6 else None
+                "category": mem[6] if len(mem) > 6 else None,
+                "metadata": json.loads(mem[7]) if len(mem) > 7 and mem[7] else None
             })
 
         return {
             "user_id": user_id,
             "count": len(formatted_memories),
-            "memories": formatted_memories
+            "memories": formatted_memories,
+            "date_range": {
+                "start": start_date,
+                "end": end_date
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/relationship/{user_id}")
-async def get_relationship(user_id: str):
-    """Get relationship data for a user"""
+@app.post("/summarize_conversation")
+async def summarize_conversation(request: ConversationSummaryRequest):
+    """Generate a comprehensive conversation summary"""
     try:
-        relationship = memory_system.get_relationship(user_id)
-        if relationship:
-            return {
-                "user_id": relationship[0],
-                "first_contact": relationship[1],
-                "last_contact": relationship[2],
-                "trust_level": relationship[3],
-                "shared_memories": relationship[4],
-                "personal_notes": relationship[5]
+        # Get all messages for the time period
+        end_time = request.end_time or datetime.now()
+        start_time = request.start_time or (end_time - timedelta(days=1))
+
+        memories = memory_system.recall(
+            user_id=request.user_id,
+            limit=10000,  # Get all messages
+            start_date=start_time,
+            end_date=end_time
+        )
+
+        # Sort by timestamp
+        memories.sort(key=lambda x: x[1])
+
+        summary = {
+            "user_id": request.user_id,
+            "period": {
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat()
+            },
+            "total_messages": len(memories),
+            "messages": []
+        }
+
+        # Process each message
+        for mem in memories:
+            message_data = {
+                "timestamp": mem[1],
+                "content": mem[3],
+                "emotional_context": mem[4],
+                "importance": mem[5]
             }
-        else:
-            return {"message": "No relationship found", "user_id": user_id}
+
+            # Parse metadata if available
+            if len(mem) > 7 and mem[7]:
+                try:
+                    message_data["metadata"] = json.loads(mem[7])
+                except:
+                    pass
+
+            if request.include_metadata:
+                # Extract role from content
+                if mem[3].startswith("Human:"):
+                    message_data["role"] = "Human"
+                    message_data["content"] = mem[3][6:].strip()
+                elif mem[3].startswith("Assistant:"):
+                    message_data["role"] = "Assistant"
+                    message_data["content"] = mem[3][10:].strip()
+                else:
+                    message_data["role"] = "Unknown"
+
+            summary["messages"].append(message_data)
+
+        # Generate conversation summary text
+        summary_text = f"=== CONVERSATION HISTORY WITH {request.user_id.upper()} ===\n"
+        summary_text += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        summary_text += f"Total Messages: {len(memories)}\n\n"
+
+        # Add key messages
+        summary_text += "=== CONVERSATION HIGHLIGHTS ===\n"
+        for msg in summary["messages"]:
+            if msg.get("importance", 0) >= 0.7:
+                timestamp = datetime.fromtimestamp(msg["timestamp"])
+                content_preview = msg["content"][:150] + "..." if len(msg["content"]) > 150 else msg["content"]
+                summary_text += f"\n[{timestamp.strftime('%H:%M')}] ⭐ {content_preview}"
+
+        summary["summary_text"] = summary_text
+        summary["statistics"] = calculate_conversation_stats(memories)
+
+        return summary
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# License management
+@app.post("/create_license")
+async def create_license(request: LicenseRequest, db: Session = Depends(get_db)):
+    """Create a new license purchase session"""
+    try:
+        # Create Stripe checkout session
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'eur',
+                    'product_data': {
+                        'name': 'ClaudUpgrade License',
+                        'description': 'Persistent memory for Claude AI',
+                    },
+                    'unit_amount': LICENSE_PRICE_EUR,
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url=request.success_url,
+            cancel_url=request.cancel_url,
+            customer_email=request.email,
+            metadata={
+                'email': request.email
+            }
+        )
+
+        return {
+            "session_id": session.id,
+            "checkout_url": session.url
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/validate_license")
+async def validate_license(validation: LicenseValidation, db: Session = Depends(get_db)):
+    """Validate a license key"""
+    try:
+        # For testing/development - accept specific test keys
+        if validation.key in ["TEST-KEY-123", "DEV-LICENSE"]:
+            return {
+                "valid": True,
+                "email": "test@example.com",
+                "created_at": datetime.now().isoformat(),
+                "expires_at": (datetime.now() + timedelta(days=365)).isoformat()
+            }
+
+        license = db.query(License).filter(
+            License.key == validation.key,
+            License.is_active == True
+        ).first()
+
+        if not license:
+            return {"valid": False, "reason": "Invalid license key"}
+
+        if license.expires_at and license.expires_at < datetime.utcnow():
+            return {"valid": False, "reason": "License expired"}
+
+        return {
+            "valid": True,
+            "email": license.email,
+            "created_at": license.created_at.isoformat(),
+            "expires_at": license.expires_at.isoformat() if license.expires_at else None
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Utility functions
+def calculate_conversation_stats(memories: List) -> dict:
+    """Calculate conversation statistics"""
+    if not memories:
+        return {}
+
+    stats = {
+        "total_messages": len(memories),
+        "human_messages": 0,
+        "assistant_messages": 0,
+        "avg_importance": 0,
+        "emotional_contexts": {},
+        "conversation_duration": 0
+    }
+
+    importance_sum = 0
+    emotions = []
+
+    for mem in memories:
+        content = mem[3]
+        importance = mem[5] or 0
+        emotion = mem[4]
+
+        if content.startswith("Human:"):
+            stats["human_messages"] += 1
+        elif content.startswith("Assistant:"):
+            stats["assistant_messages"] += 1
+
+        importance_sum += importance
+
+        if emotion:
+            emotions.extend(emotion.split(", "))
+
+    stats["avg_importance"] = importance_sum / len(memories) if memories else 0
+
+    # Count emotions
+    for emotion in emotions:
+        stats["emotional_contexts"][emotion] = stats["emotional_contexts"].get(emotion, 0) + 1
+
+    # Calculate duration
+    if len(memories) > 1:
+        first_timestamp = memories[0][1]
+        last_timestamp = memories[-1][1]
+        stats["conversation_duration"] = (last_timestamp - first_timestamp) / 3600  # in hours
+
+    return stats
+
+
 if __name__ == "__main__":
-    print("Starting Claude Memory Bridge API...")
-    print("API will be available at: http://localhost:8000")
-    print("Documentation available at: http://localhost:8000/docs")
-    # Removed reload=True to prevent the warning and immediate closure
+    print("Starting ClaudUpgrade API v2.0...")
+    print(f"Redis: {'Enabled' if redis_enabled else 'Disabled'}")
+    print(f"License management: Enabled")
+    print(f"API available at: http://localhost:8000")
+    print(f"Documentation available at: http://localhost:8000/docs")
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
