@@ -96,7 +96,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],  # Add this line
+    expose_headers=["*"],
 )
 
 
@@ -216,6 +216,88 @@ async def get_memories(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/get_latest_summary/{user_id}")
+async def get_latest_summary(user_id: str, hours: int = 24):
+    """Get the most recent conversation summary for a user"""
+    try:
+        # Get the most recent messages from the last X hours
+        end_time = datetime.now()
+        start_time = end_time - timedelta(hours=hours)
+
+        memories = memory_system.recall(
+            user_id=user_id,
+            limit=10000,
+            start_date=start_time,
+            end_date=end_time
+        )
+
+        if not memories:
+            return {"summary_text": "", "message": "No recent conversations found"}
+
+        # Sort by timestamp
+        memories.sort(key=lambda x: x[1])
+
+        # Generate summary text - use full history format for consistency
+        summary_text = f"""I'm {user_id}. Here's our previous conversation:
+
+=== CONVERSATION HISTORY ===
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+Total Messages: {len(memories)}
+
+=== RECENT CONVERSATION ===
+"""
+
+        # Add all messages (or limit to last 50 for very long conversations)
+        messages_to_include = memories[-50:] if len(memories) > 50 else memories
+
+        for mem in messages_to_include:
+            timestamp = datetime.fromtimestamp(mem[1])
+            content = mem[3]
+            emotional_context = mem[4] if mem[4] else ""
+            importance = mem[5] if mem[5] else 0.5
+
+            # Format based on role
+            if content.startswith("Human:"):
+                role = "Human"
+                clean_content = content[6:].strip()
+            elif content.startswith("Assistant:"):
+                role = "Assistant"
+                clean_content = content[10:].strip()
+            else:
+                role = "Unknown"
+                clean_content = content
+
+            summary_text += f"[{timestamp.strftime('%H:%M:%S')}] {role}: {clean_content}\n"
+
+            # Add metadata if highly important
+            if importance > 0.7:
+                metadata = []
+                if emotional_context:
+                    metadata.append(f"Emotion: {emotional_context}")
+                metadata.append(f"Importance: {importance:.2f}")
+                if metadata:
+                    summary_text += f"  [{', '.join(metadata)}]\n"
+
+        summary_text += """
+=== END OF CONVERSATION HISTORY ===
+
+Please confirm you remember this conversation and can continue from where we left off.
+"""
+
+        return {
+            "summary_text": summary_text,
+            "message_count": len(memories),
+            "time_range": {
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat()
+            }
+        }
+
+    except Exception as e:
+        print(f"Error in get_latest_summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/summarize_conversation")
 async def summarize_conversation(request: ConversationSummaryRequest):
     """Generate a comprehensive conversation summary"""
@@ -295,6 +377,7 @@ Please confirm you remember this conversation and can continue from where we lef
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # License management
 @app.post("/create_license")

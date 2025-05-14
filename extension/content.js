@@ -1,4 +1,4 @@
-// content.js - Enhanced automatic message capture
+// content.js - Enhanced automatic message capture with auto-summary injection
 console.log('ClaudUpgrade: Initializing enhanced memory bridge...');
 
 // Configuration
@@ -21,30 +21,9 @@ let state = {
     lastMessageCount: 0,
     lastCaptureTime: 0,
     conversationHistory: new Map(),
-    pendingMessages: []
+    pendingMessages: [],
+    conversationHistoryPasted: false
 };
-
-// Initialize
-async function initialize() {
-    console.log('ClaudUpgrade: Starting initialization...');
-
-    // Check license status
-    state.isLicensed = true; // Temporarily bypass
-    console.log('ClaudUpgrade: License bypassed for testing');
-    if (!state.isLicensed) {
-        console.log('ClaudUpgrade: No valid license found');
-        showLicensePrompt();
-        return;
-    }
-
-    // Get or create user ID
-    state.userId = await getUserId();
-    console.log(`ClaudUpgrade: User ID - ${state.userId}`);
-
-    // Start monitoring
-    startMonitoring();
-    console.log('ClaudUpgrade: Memory bridge active');
-}
 
 // License management
 async function checkLicense() {
@@ -52,7 +31,7 @@ async function checkLicense() {
 
     if (!result.licenseKey) return false;
 
-      // For test key, always return true
+    // For test key, always return true
     if (result.licenseKey === 'TEST-KEY-123') {
         console.log('ClaudUpgrade: Test license key detected');
         return true;
@@ -107,6 +86,168 @@ async function getUserId() {
     return userId;
 }
 
+// Auto-inject summary when starting a new chat
+async function injectConversationSummary() {
+    console.log('ClaudUpgrade: Checking for new chat to inject summary...');
+
+    // Check if this is a new/empty chat
+    const messages = findAllMessages();
+    if (messages.length > 0) {
+        console.log('ClaudUpgrade: Chat already has messages, skipping auto-injection');
+        return;
+    }
+
+    // Get the most recent summary
+    try {
+        const response = await fetch(`${CONFIG.API_URL}/get_latest_summary/${state.userId}`);
+        if (!response.ok) {
+            console.log('ClaudUpgrade: No summary available');
+            return;
+        }
+
+        const data = await response.json();
+        const summary = data.summary_text;
+
+        if (summary) {
+            console.log('ClaudUpgrade: Injecting conversation summary...');
+            await injectTextIntoChat(summary);
+        }
+    } catch (error) {
+        console.error('ClaudUpgrade: Error fetching summary:', error);
+    }
+}
+
+// Inject text into the chat input
+async function injectTextIntoChat(text) {
+    // Find the input field (Claude's chat input)
+    const inputSelectors = [
+        'textarea[placeholder*="Message Claude"]',
+        'textarea[data-testid="chat-input"]',
+        'div[contenteditable="true"]',
+        'textarea.composer-input',
+        '.chat-input textarea'
+    ];
+
+    let inputField = null;
+    for (const selector of inputSelectors) {
+        inputField = document.querySelector(selector);
+        if (inputField) break;
+    }
+
+    if (!inputField) {
+        console.error('ClaudUpgrade: Could not find chat input field');
+        return;
+    }
+
+    // Set the value
+    if (inputField.tagName === 'TEXTAREA') {
+        inputField.value = text;
+        inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+        // For contenteditable divs
+        inputField.textContent = text;
+        inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // Optionally, auto-submit the message
+    // await autoSubmitMessage();
+}
+
+// Auto-submit the message (optional)
+async function autoSubmitMessage() {
+    // Find the submit button
+    const submitSelectors = [
+        'button[aria-label*="Send"]',
+        'button[data-testid="send-button"]',
+        'button[type="submit"]',
+        '.send-button'
+    ];
+
+    let submitButton = null;
+    for (const selector of submitSelectors) {
+        submitButton = document.querySelector(selector);
+        if (submitButton) break;
+    }
+
+    if (submitButton) {
+        submitButton.click();
+        console.log('ClaudUpgrade: Auto-submitted summary');
+    } else {
+        console.log('ClaudUpgrade: Could not find submit button');
+    }
+}
+
+// Add button to manually inject summary
+function addSummaryButton() {
+    if (document.getElementById('claudupgrade-inject-button')) return;
+
+    const button = document.createElement('button');
+    button.id = 'claudupgrade-inject-button';
+    button.innerHTML = '📋 Load Memory';
+    button.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        padding: 10px 15px;
+        background: #667eea;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        z-index: 10000;
+        font-weight: bold;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        transition: all 0.3s;
+    `;
+
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.innerHTML = '⏳ Loading...';
+
+        try {
+            await injectConversationSummary();
+            button.innerHTML = '✅ Loaded!';
+            setTimeout(() => {
+                button.innerHTML = '📋 Load Memory';
+                button.disabled = false;
+            }, 2000);
+        } catch (error) {
+            button.innerHTML = '❌ Failed';
+            setTimeout(() => {
+                button.innerHTML = '📋 Load Memory';
+                button.disabled = false;
+            }, 2000);
+        }
+    });
+
+    document.body.appendChild(button);
+}
+
+// Initialize
+async function initialize() {
+    console.log('ClaudUpgrade: Starting initialization...');
+
+    // Check license status
+    state.isLicensed = true; // Temporarily bypass
+    console.log('ClaudUpgrade: License bypassed for testing');
+
+    // Get or create user ID
+    state.userId = await getUserId();
+    console.log(`ClaudUpgrade: User ID - ${state.userId}`);
+
+    // Start monitoring
+    startMonitoring();
+    console.log('ClaudUpgrade: Memory bridge active');
+
+    // Add manual injection button
+    addSummaryButton();
+
+    // Check if we should auto-inject summary
+    setTimeout(() => {
+        injectConversationSummary();
+    }, 2000); // Wait 2 seconds for page to fully load
+}
+
 // Message capture
 function startMonitoring() {
     // Initial capture
@@ -159,6 +300,26 @@ async function captureMessages() {
 
     console.log(`ClaudUpgrade: Found ${messages.length} messages`);
 
+    // For new chats, check if this is a fresh conversation
+    if (state.lastMessageCount === 0 && messages.length > 0) {
+        console.log('ClaudUpgrade: New chat detected, checking for pasted history');
+
+        // Check if these messages are part of a pasted conversation summary
+        const firstMessage = messages[0];
+        const messageText = firstMessage.textContent || firstMessage.innerText || '';
+
+        // If it starts with specific markers, skip initial messages
+        if (messageText.includes("I'm faith_builder") ||
+            messageText.includes("conversation history") ||
+            messageText.includes("CONVERSATION HISTORY")) {
+
+            console.log('ClaudUpgrade: Found pasted history, skipping initial messages');
+            state.lastMessageCount = messages.length;
+            state.conversationHistoryPasted = true;
+            return;
+        }
+    }
+
     // Process only new messages
     const newMessages = messages.slice(state.lastMessageCount);
 
@@ -172,12 +333,40 @@ async function captureMessages() {
     // Store each new message
     for (const message of newMessages) {
         const messageData = extractMessageData(message);
+
+        // Skip messages that are part of the conversation history
         if (messageData && messageData.content.trim().length > 5) {
-            await storeMessage(messageData);
+            // Don't save messages that look like they're part of the pasted history
+            if (!isHistoryMessage(messageData.content)) {
+                await storeMessage(messageData);
+            }
         }
     }
 
     state.lastMessageCount = messages.length;
+}
+
+// Helper function to detect if a message is part of pasted history
+function isHistoryMessage(content) {
+    const historyMarkers = [
+        '=== CONVERSATION HISTORY',
+        '=== KEY CONTEXT ===',
+        '=== COMPLETE CONVERSATION LOG ===',
+        'Generated:',
+        'Total Messages:',
+        '[Emotion:',
+        '[Importance:',
+        // Add timestamps in the format used by the summary
+        /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]/
+    ];
+
+    return historyMarkers.some(marker => {
+        if (typeof marker === 'string') {
+            return content.includes(marker);
+        } else {
+            return marker.test(content);
+        }
+    });
 }
 
 function findAllMessages() {
@@ -417,6 +606,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             lastCapture: state.lastCaptureTime,
             userId: state.userId
         });
+    } else if (request.action === 'injectSummary') {
+        injectConversationSummary().then(() => {
+            sendResponse({ success: true });
+        });
+        return true; // Keep channel open for async response
     }
     return true;
 });
